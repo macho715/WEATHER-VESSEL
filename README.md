@@ -11,6 +11,9 @@ A comprehensive maritime logistics control system with real-time vessel tracking
 
 ### 🌤️ Weather Integration
 - Marine weather data from Open-Meteo API
+- ADNOC weather screenshots interpreted by AI for rapid risk flagging
+- Clipboard paste and drag-and-drop ingestion for screenshot uploads
+- Inline attachment tray mirrors pasted captures for quick review
 - IOI (Index of Operability) calculation (0-100 scale)
 - Go/No-Go decision support based on weather conditions
 - Real-time marine snapshot display (wave height, wind speed)
@@ -20,6 +23,8 @@ A comprehensive maritime logistics control system with real-time vessel tracking
 - AI assistant for logistics questions
 - Risk analysis and mitigation recommendations
 - File upload support (PDF, images, CSV)
+- Dedicated AI weather insight panel for screenshot uploads
+- Unified attachment preview in both control panel and assistant modal
 
 ### 📊 Schedule Management
 - Voyage schedule management with CSV/JSON import
@@ -56,8 +61,10 @@ cd WEATHER-VESSEL
 pip install -r requirements.txt
 ```
 
-3. Set up environment variables:
+3. Set up environment variables (supports `.env` file in project root):
 ```bash
+echo "OPENAI_API_KEY=your-openai-api-key" >> .env
+# or export directly for the current shell
 export OPENAI_API_KEY="your-openai-api-key"
 ```
 
@@ -67,13 +74,15 @@ python -m uvicorn openai_gateway:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 5. Open `logistics_control_tower_v2.html` in your browser
+6. If your gateway is running on a different host/port, click the **API 설정** button in the Vessel Control panel to update the base URL (right-click to reset to the default)
 
 ## Usage
 
 ### Basic Operations
 - **Vessel Tracking**: View real-time vessel position and route
 - **Schedule Upload**: Import voyage schedules via CSV/JSON
-- **Weather Data**: Upload weather data for risk analysis
+- **Weather Data**: Upload weather data (CSV) or ADNOC screenshots for risk analysis
+- **Weather Screenshots**: Paste from clipboard or drag-and-drop captures directly into the weather uploader
 - **AI Assistant**: Ask questions about logistics operations
 - **Daily Briefing**: Generate AI-powered operational summaries
 
@@ -82,6 +91,11 @@ python -m uvicorn openai_gateway:app --host 0.0.0.0 --port 8000 --reload
 - **Risk Simulation**: Test different scenarios
 - **Weather Linking**: Automatic schedule adjustments based on weather
 - **File Analysis**: Upload documents for AI analysis
+
+### API Gateway Configuration
+- Click **API 설정** (Vessel Control panel) to set the OpenAI gateway base URL; the value persists in local storage.
+- Right-click the same button to revert to the default gateway defined in the HTML `data-api-base-url` attribute.
+- The API status chip displays live connectivity and target host/port after each health check.
 
 ## API Endpoints
 
