@@ -255,13 +255,31 @@
       return isNaN(Date.parse(t)) ? null : new Date(t);
     };
     const parseCSV = (text)=>{
-      const lines = text.trim().split(/\r?\n/);
-      const header = lines.shift().split(',').map(h=>h.trim());
+      const lines = text.trim().split(/\r?\n/).filter(Boolean);
+      if(lines.length === 0) return [];
+      const firstCells = lines[0].split(',').map(c=>c.trim().replace(/^\ufeff/, ''));
+      const canonical = ['id','cargo','etd','eta','status'];
+      const headerSet = new Set(firstCells.map(cell=>cell.toLowerCase()));
+      const headerDetected =
+        canonical.some(col=>headerSet.has(col)) || headerSet.has('voyage');
+      if(headerDetected){
+        const header = firstCells;
+        return lines.slice(1).map(line=>{
+          const cells = line.split(',').map(c=>c.trim());
+          const obj={};
+          header.forEach((h,i)=>{ obj[h]=cells[i]; });
+          return obj;
+        });
+      }
       return lines.map(line=>{
         const cells = line.split(',').map(c=>c.trim());
-        const obj={};
-        header.forEach((h,i)=> obj[h]=cells[i]);
-        return obj;
+        return {
+          id: cells[0] || '',
+          cargo: cells[1] || '',
+          etd: cells[2] || '',
+          eta: cells[3] || '',
+          status: cells[4] || 'Scheduled'
+        };
       });
     };
 

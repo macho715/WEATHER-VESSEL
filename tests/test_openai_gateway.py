@@ -69,7 +69,7 @@ def test_assistant_with_image_and_text(
             SimpleNamespace(
                 type="message",
                 message=SimpleNamespace(
-                    content=[SimpleNamespace(type="text", text="완료")]
+                    content=[SimpleNamespace(type="output_text", text="완료")]
                 ),
             )
         ]
@@ -105,7 +105,7 @@ def test_assistant_with_image_and_text(
     assert any(
         item.get("text", "").startswith("[파일 첨부")
         for item in user_block
-        if item["type"] == "text"
+        if item["type"] == "input_text"
     )
 
 

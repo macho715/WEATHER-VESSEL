@@ -8,18 +8,18 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Literal, Sequence, cast
+from typing import Any, Callable, Dict, Iterable, List, Literal, Sequence, TypeVar, cast
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from openai import AsyncOpenAI
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel as PydanticBaseModel, ConfigDict, Field
 from PyPDF2 import PdfReader
 
 LOGGER = logging.getLogger(__name__)
 
 
-class LogiBaseModel(BaseModel):
+class LogiBaseModel(PydanticBaseModel):  # type: ignore[misc]
     """로지스틱 도메인 공통 베이스 모델. | Common logistics base model."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -133,14 +133,14 @@ def _build_user_content(
 ) -> MessagePayload:
     """사용자 메시지 콘텐츠 구성. | Compose user content payload."""
 
-    content: MessagePayload = [{"type": "text", "text": prompt}]
+    content: MessagePayload = [{"type": "input_text", "text": prompt}]
     for idx, file in enumerate(files):
         data = raw_payloads[idx]
         filename = file.filename or f"attachment-{idx+1}"
         if file.content_type and file.content_type.startswith("image/"):
             content.append(
                 {
-                    "type": "text",
+                    "type": "input_text",
                     "text": f"[이미지 첨부: {filename}]",
                 }
             )
@@ -153,7 +153,7 @@ def _build_user_content(
             descriptor = f"[PDF 첨부: {filename}]\n{pdf_text}"
             content.append(
                 {
-                    "type": "text",
+                    "type": "input_text",
                     "text": descriptor,
                 }
             )
@@ -166,7 +166,7 @@ def _build_user_content(
             decoded = f"[base64-encoded attachment]\n{decoded[:6000]}"
         content.append(
             {
-                "type": "text",
+                "type": "input_text",
                 "text": f"[파일 첨부: {filename}]\n{decoded[:8000]}",
             }
         )
@@ -187,7 +187,7 @@ def _extract_output_text(response: Any) -> str:
             if not message:
                 continue
             for block in getattr(message, "content", []) or []:
-                if getattr(block, "type", None) == "text":
+                if getattr(block, "type", None) in {"text", "output_text"}:
                     text_value = getattr(block, "text", "")
                     if text_value:
                         texts.append(text_value)
@@ -227,7 +227,7 @@ def _build_history(messages: Sequence[ChatMessage]) -> MessagePayload:
             {
                 "role": item.role,
                 "content": [
-                    {"type": "text", "text": item.content},
+                    {"type": "input_text", "text": item.content},
                 ],
             }
         )
@@ -244,14 +244,29 @@ app.add_middleware(
 )
 
 
-@app.get("/health")
+FuncT = TypeVar("FuncT", bound=Callable[..., Any])
+
+
+def typed_get(path: str, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+    """FastAPI GET 데코레이터에 타입 힌트를 부여. | Typed FastAPI GET decorator."""
+
+    return cast("Callable[[FuncT], FuncT]", app.get(path, **kwargs))
+
+
+def typed_post(path: str, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+    """FastAPI POST 데코레이터에 타입 힌트를 부여. | Typed FastAPI POST decorator."""
+
+    return cast("Callable[[FuncT], FuncT]", app.post(path, **kwargs))
+
+
+@typed_get("/health")
 async def healthcheck() -> Dict[str, str]:
     """헬스체크. | Service health check."""
 
     return {"status": "ok"}
 
 
-@app.post("/api/assistant", response_model=AssistantResponse)
+@typed_post("/api/assistant", response_model=AssistantResponse)
 async def run_assistant(
     prompt: str = Form(..., max_length=4000),
     history: str = Form("[]"),
@@ -298,7 +313,7 @@ async def run_assistant(
     return AssistantResponse(answer=_extract_output_text(response))
 
 
-@app.post("/api/briefing", response_model=BriefingResponse)
+@typed_post("/api/briefing", response_model=BriefingResponse)
 async def generate_briefing(payload: BriefingRequest) -> BriefingResponse:
     """일일 브리핑 생성. | Create a daily briefing."""
 
@@ -339,7 +354,7 @@ async def generate_briefing(payload: BriefingRequest) -> BriefingResponse:
                     "role": "system",
                     "content": [
                         {
-                            "type": "text",
+                            "type": "input_text",
                             "text": (
                                 "당신은 HVDC 프로젝트 물류 전문가입니다. "
                                 "일일 브리핑을 한국어로 작성하세요."
@@ -351,7 +366,7 @@ async def generate_briefing(payload: BriefingRequest) -> BriefingResponse:
                     "role": "user",
                     "content": [
                         {
-                            "type": "text",
+                            "type": "input_text",
                             "text": prompt,
                         }
                     ],
