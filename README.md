@@ -12,6 +12,7 @@ A comprehensive maritime logistics control system with real-time vessel tracking
 ### 🌤️ Weather Integration
 - Marine weather data from Open-Meteo API
 - ADNOC weather screenshots interpreted by AI for rapid risk flagging
+- Clipboard paste and drag-and-drop ingestion for screenshot uploads
 - IOI (Index of Operability) calculation (0-100 scale)
 - Go/No-Go decision support based on weather conditions
 - Real-time marine snapshot display (wave height, wind speed)

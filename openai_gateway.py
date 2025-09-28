@@ -42,6 +42,7 @@ class BriefingRequest(LogiBaseModel):
     current_voyage: str | None = None
     schedule: List[dict] = Field(default_factory=list)
     weather_windows: List[dict] = Field(default_factory=list)
+    model: str = Field(default="gpt-4.1-mini", max_length=64)
 
 
 class BriefingResponse(LogiBaseModel):
