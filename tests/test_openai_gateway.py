@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -189,3 +190,89 @@ def test_require_client_reuses_instance(
 
     assert first is second
     assert created == ["sk-test"]
+
+
+def test_schedule_normalize_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Plain text schedule is parsed locally without OpenAI."""
+
+    def fail_call(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("OpenAI should not be called for local parse")
+
+    monkeypatch.setattr(openai_gateway, "_call_openai", fail_call)
+
+    form = {
+        "text": "Voyage,Cargo\n80th,Dune Sand\n81st,20mm Agg.",
+        "anchor_etd": "2025-10-01T00:00:00Z",
+        "context_schedule": "[]",
+    }
+
+    with _client() as client:
+        response = client.post("/api/schedule/normalize", data=form)
+
+    assert response.status_code == 200
+    payload = response.json()
+    rows = payload["schedule"]
+    assert len(rows) == 2
+    assert rows[0]["id"] == "80th"
+    assert rows[0]["cargo"] == "Dune Sand"
+    assert rows[0]["etd"] == "2025-10-01T00:00:00Z"
+    assert rows[0]["eta"] == "2025-10-01T12:00:00Z"
+    assert rows[1]["etd"] == "2025-10-01T16:00:00Z"
+
+
+def test_schedule_normalize_with_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Image uploads trigger OpenAI normalization."""
+
+    class FakeResponse:
+        def __init__(self, text: str) -> None:
+            self.choices = [
+                SimpleNamespace(
+                    message=SimpleNamespace(content=text),
+                )
+            ]
+
+    async def fake_call(messages: Payload, *, model: str) -> Any:
+        assert model == "gpt-4.1-mini"
+        assert any(
+            block["type"] == "input_image" for block in messages[-1]["content"]
+        )
+        text = json.dumps(
+            {
+                "schedule": [
+                    {
+                        "id": "90th",
+                        "cargo": "Sand",
+                        "etd": "2025-10-03T00:00:00Z",
+                        "eta": "2025-10-03T12:00:00Z",
+                        "status": "Scheduled",
+                    }
+                ]
+            }
+        )
+        return FakeResponse(text)
+
+    monkeypatch.setattr(openai_gateway, "_call_openai", fake_call)
+
+    png_bytes = base64.b64decode(
+        (
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4n"
+            "GNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+        )
+    )
+    files = [("files", ("capture.png", png_bytes, "image/png"))]
+
+    with _client() as client:
+        response = client.post(
+            "/api/schedule/normalize",
+            data={"text": "", "context_schedule": "[]"},
+            files=files,
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["notes"].startswith("AI")
+    row = payload["schedule"][0]
+    assert row["id"] == "90th"
+    assert row["eta"] == "2025-10-03T12:00:00Z"

@@ -29,6 +29,7 @@ A comprehensive maritime logistics control system with real-time vessel tracking
 
 ### 📊 Schedule Management
 - Voyage schedule management with CSV/JSON import
+- Free-form text or screenshot ingestion with AI-powered normalization (Voyage & Cargo only required)
 - Weather-linked schedule adjustments
 - Sail/Discharge readiness badges with per-leg mini-Gantt timeline
 - Risk simulation and control
@@ -82,7 +83,7 @@ python -m uvicorn openai_gateway:app --host 0.0.0.0 --port 8002 --reload
 
 ### Basic Operations
 - **Vessel Tracking**: View real-time vessel position and route
-- **Schedule Upload**: Import voyage schedules via CSV/JSON
+- **Schedule Upload**: Import voyage schedules via CSV/JSON, plain text, or screenshots (Voyage/Cargo만 있어도 자동 시간 보완)
 - **Weather Data**: Upload weather data (CSV) or ADNOC screenshots for risk analysis
 - **Weather Screenshots**: Paste from clipboard or drag-and-drop captures directly into the weather uploader
 - **AI Assistant**: Ask questions about logistics operations
@@ -105,6 +106,7 @@ python -m uvicorn openai_gateway:app --host 0.0.0.0 --port 8002 --reload
 - `GET /health` - Health check
 - `POST /api/assistant` - AI assistant chat
 - `POST /api/briefing` - Generate daily briefing
+- `POST /api/schedule/normalize` - Normalize free-form schedule text or images into structured voyages
 
 ## Performance Optimizations
 

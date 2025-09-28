@@ -7,13 +7,17 @@ import io
 import json
 import logging
 import os
+import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Literal, Sequence, TypeVar, cast
+from typing import (Any, Callable, Dict, Iterable, List, Literal, Sequence,
+                    TypeVar, cast)
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from openai import AsyncOpenAI
-from pydantic import BaseModel as PydanticBaseModel, ConfigDict, Field
+from pydantic import BaseModel as PydanticBaseModel
+from pydantic import ConfigDict, Field
 from PyPDF2 import PdfReader
 
 LOGGER = logging.getLogger(__name__)
@@ -54,6 +58,33 @@ class AssistantResponse(LogiBaseModel):
     """AI 어시스턴트 응답. | AI assistant response."""
 
     answer: str
+
+
+class ScheduleDraft(LogiBaseModel):
+    """정규화 전 스케줄 초안. | Pre-normalized schedule draft."""
+
+    id: str
+    cargo: str
+    etd: str | None = None
+    eta: str | None = None
+    status: str | None = None
+
+
+class ScheduleRow(LogiBaseModel):
+    """스케줄 행 구조. | Schedule row payload."""
+
+    id: str
+    cargo: str
+    etd: str
+    eta: str
+    status: str = Field(default="Scheduled")
+
+
+class ScheduleNormalizeResponse(LogiBaseModel):
+    """스케줄 정규화 응답. | Schedule normalization result."""
+
+    schedule: List[ScheduleRow]
+    notes: str | None = None
 
 
 MessagePayload = List[Dict[str, Any]]
@@ -208,6 +239,178 @@ def _extract_output_text(response: Any) -> str:
     return str(message_content)
 
 
+def _parse_datetime(value: str | None) -> datetime | None:
+    """문자열을 UTC datetime 으로 파싱. | Parse string into UTC datetime."""
+
+    if not value:
+        return None
+    text = value.strip().replace(" ", "T")
+    if not text:
+        return None
+    if re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$", text):
+        text = f"{text}:00"
+    try:
+        if text.endswith("Z"):
+            iso_text = text.replace("Z", "+00:00")
+            return datetime.fromisoformat(iso_text).astimezone(timezone.utc)
+        parsed = datetime.fromisoformat(text)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        for fmt in (
+            "%Y-%m-%dT%H:%M",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y/%m/%dT%H:%M:%S",
+        ):
+            try:
+                naive = datetime.strptime(text, fmt)
+                return naive.replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+    return None
+
+
+def _format_iso(dt: datetime) -> str:
+    """datetime 을 ISO8601 UTC 문자열로 변환. | Format datetime as ISO8601 UTC."""
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.isoformat().replace("+00:00", "Z")
+
+
+def _autofill_schedule(
+    rows: List[ScheduleDraft], anchor: datetime | None
+) -> List[ScheduleRow]:
+    """스케줄 초안을 자동 완성. | Autofill schedule draft rows."""
+
+    voyage_anchor = anchor or datetime.now(timezone.utc)
+    completed: List[ScheduleRow] = []
+    cursor = voyage_anchor
+    for idx, draft in enumerate(rows):
+        etd_dt = _parse_datetime(draft.etd) or (cursor if idx == 0 else cursor)
+        eta_dt = _parse_datetime(draft.eta)
+        if eta_dt is None or eta_dt <= etd_dt:
+            eta_dt = etd_dt + timedelta(hours=12)
+        status = (draft.status or "Scheduled").strip() or "Scheduled"
+        completed.append(
+            ScheduleRow(
+                id=draft.id.strip(),
+                cargo=draft.cargo.strip(),
+                etd=_format_iso(etd_dt),
+                eta=_format_iso(eta_dt),
+                status=status,
+            )
+        )
+        cursor = eta_dt + timedelta(hours=4)
+    return completed
+
+
+def _extract_json_block(text: str) -> Any:
+    """LLM 응답에서 JSON 블록 추출. | Extract JSON block from model output."""
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    start = text.find("[")
+    end = text.rfind("]")
+    if start != -1 and end != -1 and end > start:
+        candidate = text[start:end + 1]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+    start_obj = text.find("{")
+    end_obj = text.rfind("}")
+    if start_obj != -1 and end_obj != -1 and end_obj > start_obj:
+        candidate = text[start_obj:end_obj + 1]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+    raise ValueError("JSON block not found in model output")
+
+
+def _drafts_from_rows(rows: Iterable[Dict[str, Any]]) -> List[ScheduleDraft]:
+    """원시 dict 리스트를 Draft로 변환. | Convert raw dict rows into drafts."""
+
+    drafts: List[ScheduleDraft] = []
+    for idx, raw in enumerate(rows):
+        if not isinstance(raw, dict):
+            raise ValueError(f"Row {idx+1} is not an object")
+        candidates = {
+            "id": (
+                raw.get("id")
+                or raw.get("voyage")
+                or raw.get("Voyage")
+                or raw.get("trip")
+            ),
+            "cargo": (
+                raw.get("cargo")
+                or raw.get("Cargo")
+                or raw.get("commodity")
+            ),
+            "etd": (
+                raw.get("etd")
+                or raw.get("ETD")
+                or raw.get("departure")
+            ),
+            "eta": (
+                raw.get("eta")
+                or raw.get("ETA")
+                or raw.get("arrival")
+            ),
+            "status": (
+                raw.get("status")
+                or raw.get("Status")
+                or raw.get("state")
+            ),
+        }
+        if not candidates["id"] or not candidates["cargo"]:
+            raise ValueError(f"Row {idx+1} missing voyage or cargo")
+        drafts.append(ScheduleDraft.model_validate(candidates))
+    return drafts
+
+
+def _try_local_schedule(text: str) -> List[ScheduleDraft]:
+    """로컬 파서로 텍스트 스케줄 추출. | Parse schedule text without LLM."""
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return []
+    header_cells = [cell.strip().lower() for cell in lines[0].split(",")]
+    canonical = {"id", "voyage", "cargo", "etd", "eta", "status"}
+    has_header = any(cell in canonical for cell in header_cells)
+    records: List[Dict[str, Any]] = []
+    if has_header:
+        headers = [cell.strip() for cell in lines[0].split(",")]
+        for line in lines[1:]:
+            cells = [cell.strip() for cell in line.split(",")]
+            record = {
+                header: cells[idx] if idx < len(cells) else ""
+                for idx, header in enumerate(headers)
+            }
+            records.append(record)
+    else:
+        for line in lines:
+            cells = [cell.strip() for cell in line.split(",")]
+            if len(cells) < 2:
+                continue
+            records.append(
+                {
+                    "id": cells[0],
+                    "cargo": cells[1],
+                    "etd": cells[2] if len(cells) > 2 else None,
+                    "eta": cells[3] if len(cells) > 3 else None,
+                    "status": cells[4] if len(cells) > 4 else None,
+                }
+            )
+    if not records:
+        return []
+    return _drafts_from_rows(records)
+
+
 async def _call_openai(messages: MessagePayload, *, model: str) -> Any:
     """OpenAI Responses API 호출. | Invoke OpenAI Responses API."""
 
@@ -311,6 +514,142 @@ async def run_assistant(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return AssistantResponse(answer=_extract_output_text(response))
+
+
+@typed_post(
+    "/api/schedule/normalize",
+    response_model=ScheduleNormalizeResponse,
+)
+async def normalize_schedule(
+    text: str | None = Form(None),
+    anchor_etd: str | None = Form(None),
+    context_schedule: str = Form("[]"),
+    model: str = Form("gpt-4.1-mini"),
+    files: List[UploadFile] | None = File(default=None),
+) -> ScheduleNormalizeResponse:
+    """스케줄 텍스트/이미지를 정규화. | Normalize schedule text or images."""
+
+    anchor_dt = _parse_datetime(anchor_etd)
+    try:
+        context_data = (
+            json.loads(context_schedule) if context_schedule else []
+        )
+    except json.JSONDecodeError as exc:  # pragma: no cover
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid context_schedule: {exc}",
+        ) from exc
+
+    if anchor_dt is None and isinstance(context_data, list) and context_data:
+        last_row = context_data[-1]
+        anchor_dt = (
+            _parse_datetime(last_row.get("eta"))
+            if isinstance(last_row, dict)
+            else None
+        )
+
+    # Local parsing for plain text (no attachments)
+    drafts: List[ScheduleDraft] = []
+    if text and not files:
+        drafts = _try_local_schedule(text)
+        if drafts:
+            schedule = _autofill_schedule(drafts, anchor_dt)
+            return ScheduleNormalizeResponse(
+                schedule=schedule,
+                notes="로컬 파서로 스케줄을 정규화했습니다.",
+            )
+
+    attachments = list(files or [])
+    payloads: List[bytes] = []
+    for file in attachments:
+        payloads.append(await file.read())
+
+    if not text and not attachments:
+        raise HTTPException(status_code=400, detail="정규화할 데이터가 없습니다.")
+
+    context_summary = (
+        json.dumps(context_data[-5:], ensure_ascii=False, indent=2)
+        if isinstance(context_data, list)
+        else "[]"
+    )
+    user_sections: List[str] = [
+        "아래 자료를 id, cargo, etd, eta, status 필드가 있는 JSON 배열로 정규화하세요.",
+        "etd/eta 값이 없으면 12시간 항해 + 4시간 하역/적재 패턴을 기준으로 추정하세요.",
+    ]
+    if anchor_dt:
+        user_sections.append(
+            f"이전 항차 기준 anchor ETD: {_format_iso(anchor_dt)}"
+        )
+    if context_summary:
+        user_sections.append(
+            f"최근 스케줄 컨텍스트: {context_summary}"
+        )
+    if text:
+        snippet = text.strip()
+        if len(snippet) > 6000:
+            snippet = snippet[:6000]
+        user_sections.append(f"원본 텍스트:\n{snippet}")
+
+    user_prompt = "\n\n".join(user_sections)
+    content = _build_user_content(user_prompt, attachments, payloads)
+
+    try:
+        response = await _call_openai(
+            [
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                "당신은 HVDC 물류 스케줄 정규화 전문가입니다. "
+                                "반드시 JSON 형식만 반환하고, 한국어 status 값을 그대로 유지하세요."
+                            ),
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": content,
+                },
+            ],
+            model=model,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - network failure
+        LOGGER.exception("OpenAI call failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    raw_text = _extract_output_text(response)
+    try:
+        parsed = _extract_json_block(raw_text)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    records: List[Dict[str, Any]]
+    if isinstance(parsed, dict):
+        payload_rows = parsed.get("schedule")
+        if not isinstance(payload_rows, list):
+            raise HTTPException(
+                status_code=502, detail="AI 응답에 schedule 리스트가 없습니다."
+            )
+        records = cast(List[Dict[str, Any]], payload_rows)
+    elif isinstance(parsed, list):
+        records = cast(List[Dict[str, Any]], parsed)
+    else:
+        raise HTTPException(status_code=502, detail="AI 응답이 리스트 형식이 아닙니다.")
+
+    try:
+        drafts = _drafts_from_rows(records)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    schedule = _autofill_schedule(drafts, anchor_dt)
+    return ScheduleNormalizeResponse(
+        schedule=schedule,
+        notes="AI 추론으로 스케줄을 보정했습니다.",
+    )
 
 
 @typed_post("/api/briefing", response_model=BriefingResponse)

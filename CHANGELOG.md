@@ -10,6 +10,8 @@
 - Separate sail vs discharge weather limits with inline readiness badges and voyage mini-Gantt bars.
 - Add MW4 waiting strategy toggle so vessels hold departure until both sail and discharge windows are safe.
 - Cover gateway workflows with automated pytest suite to ensure OpenAI connectivity remains green.
+- Normalize free-form schedule text or screenshots via `/api/schedule/normalize`, estimating ETD/ETA when only Voyage/Cargo are provided.
+- Accept text files and pasted captures in the schedule uploader with hover-to-paste detection and AI fallback, while keeping the vessel info panel scrollable on smaller viewports.
 
 ### Fixed
 - Handle missing `OPENAI_API_KEY` gracefully by loading `.env` configuration and surfacing

@@ -79,8 +79,8 @@
 
         <div class="mt-4 grid grid-cols-2 gap-2">
           <label class="w-full">
-            <input type="file" id="file-schedule" class="hidden" accept=".csv,.json"/>
-            <span id="label-schedule" class="w-full inline-flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-3 rounded-lg cursor-pointer">Upload Schedule (CSV/JSON)</span>
+            <input type="file" id="file-schedule" class="hidden" accept=".csv,.json,.txt,image/*"/>
+            <span id="label-schedule" class="w-full inline-flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-3 rounded-lg cursor-pointer drop-zone">Upload Schedule (CSV/TXT/Image)</span>
           </label>
           <label class="w-full">
             <input type="file" id="file-weather" class="hidden" accept=".csv,image/*"/>
@@ -89,6 +89,7 @@
         </div>
         <div class="mt-3 space-y-2 text-xs text-slate-400">
           <p>Tips: Press <span class="kbd">Esc</span> to close modals. 파일 포맷은 하단 가이드를 참고.</p>
+          <p class="text-slate-300">스케줄은 CSV/텍스트/스크린샷 모두 지원하며 Voyage·Cargo만 있어도 자동 완성됩니다.</p>
           <div class="flex items-center justify-between gap-2">
             <div>API 상태 <span class="chip" id="api-status">API: Offline</span></div>
             <button id="api-config-btn" class="px-2 py-1 rounded bg-slate-800/70 hover:bg-slate-700 text-slate-100 border border-slate-600 text-[11px] font-semibold">API 설정</button>
@@ -716,12 +717,175 @@
     const weatherInput  = document.getElementById('file-weather');
     const scheduleLabel = document.getElementById('label-schedule');
     const weatherLabel  = document.getElementById('label-weather');
+    const scheduleDropTarget = scheduleLabel?.parentElement || scheduleLabel;
     const weatherDropTarget = weatherLabel?.parentElement || weatherLabel;
     const weatherBusyClasses = ['bg-amber-500','hover:bg-amber-500','animate-pulse'];
     const weatherReadyClasses = ['bg-emerald-600','hover:bg-emerald-700'];
 
-    scheduleLabel.addEventListener('click',()=> scheduleInput.click());
-    weatherLabel.addEventListener('click',()=> weatherInput.click());
+    scheduleLabel?.addEventListener('click',()=> scheduleInput?.click());
+    weatherLabel?.addEventListener('click',()=> weatherInput?.click());
+
+    function canonicalizeScheduleRows(rows){
+      if(!Array.isArray(rows)) throw new Error('Schedule payload must be an array');
+      return rows.map((raw, idx)=>{
+        const record = Array.isArray(raw) ? {
+          id: raw[0], cargo: raw[1], etd: raw[2], eta: raw[3], status: raw[4]
+        } : raw || {};
+        const id = record.id ?? record.voyage ?? record.Voyage ?? record.trip ?? record.Voy ?? record.VOYAGE ?? '';
+        const cargo = record.cargo ?? record.Cargo ?? record.commodity ?? record.load ?? '';
+        const etd = record.etd ?? record.ETD ?? record.departure ?? record.depart ?? record.load_time ?? '';
+        const eta = record.eta ?? record.ETA ?? record.arrival ?? record.disch ?? record.discharge_time ?? '';
+        const status = record.status ?? record.Status ?? 'Scheduled';
+        const etdDt = parseISO(etd);
+        const etaDt = parseISO(eta);
+        if(!String(id).trim() || !String(cargo).trim() || !etdDt || !etaDt){
+          throw new Error(`Missing required fields (id,cargo,etd,eta) at row ${idx+1}`);
+        }
+        return {
+          id: String(id).trim(),
+          cargo: String(cargo).trim(),
+          etd: fmtIso(etdDt),
+          eta: fmtIso(etaDt),
+          status: String(status || 'Scheduled').trim() || 'Scheduled'
+        };
+      });
+    }
+
+    function applyScheduleData(rows, meta = {}){
+      if(!Array.isArray(rows) || !rows.length){
+        throw new Error('No schedule rows provided');
+      }
+      const normalized = canonicalizeScheduleRows(rows).sort((a,b)=> +new Date(a.etd) - +new Date(b.etd));
+      voyageSchedule = normalized;
+      if(meta.label){
+        scheduleLabel.textContent = meta.label;
+      }
+      if(weatherWindows.length){
+        applyWeatherToSchedule();
+        if(meta.note){
+          setInfo(meta.note, meta.tone || 'info');
+        }
+      }else{
+        renderSchedule();
+        const message = meta.note || `스케줄 ${normalized.length}건 로드 완료.`;
+        setInfo(message, meta.tone || 'info');
+      }
+    }
+
+    async function normalizeScheduleViaAI({ files = [], text = '', label = 'AI Normalized', source = 'upload' } = {}){
+      if(!files.length && !text){
+        throw new Error('정규화할 데이터가 없습니다.');
+      }
+      const originalText = scheduleLabel?.textContent;
+      if(scheduleLabel){
+        scheduleLabel.textContent = source === 'paste' ? 'Clipboard 인식 중…' : 'AI 정규화 중…';
+        scheduleLabel.classList.add('animate-pulse');
+      }
+      try{
+        const formData = new FormData();
+        formData.append('model', assistantModelSelect?.value || 'gpt-4.1-mini');
+        if(text){
+          formData.append('text', text.slice(0, 20000));
+        }
+        if(voyageSchedule.length){
+          formData.append('context_schedule', JSON.stringify(voyageSchedule));
+          formData.append('anchor_etd', voyageSchedule[voyageSchedule.length - 1].eta);
+        }
+        files.forEach((file, idx)=>{
+          const name = file.name && file.name.trim() !== ''
+            ? file.name
+            : `capture-${new Date().toISOString().replace(/[.:]/g,'-')}-${idx+1}${guessExtension(file.type || '')}`;
+          formData.append('files', file, name);
+        });
+
+        const res = await fetch(`${apiBase}/api/schedule/normalize`, { method:'POST', body: formData });
+        if(!res.ok){
+          let message = 'Schedule normalization failed';
+          try{
+            const errJson = await res.json();
+            message = errJson?.detail || errJson?.message || JSON.stringify(errJson);
+          }catch(_err){
+            const textErr = await res.text();
+            message = textErr || message;
+          }
+          throw new Error(message);
+        }
+        const data = await res.json();
+        const rows = data?.schedule;
+        if(!Array.isArray(rows) || rows.length === 0){
+          throw new Error('AI가 유효한 스케줄을 반환하지 않았습니다.');
+        }
+        const note = data?.notes || `AI가 ${rows.length}건 스케줄을 정규화했습니다.`;
+        applyScheduleData(rows, { label: `Loaded: ${label}`, note });
+      }catch(err){
+        if(originalText && scheduleLabel){
+          scheduleLabel.textContent = originalText;
+        }
+        throw err;
+      }finally{
+        scheduleLabel?.classList.remove('animate-pulse');
+      }
+    }
+
+    async function processScheduleFile(file, source = 'upload'){
+      if(!file) return;
+      const baseName = file.name && file.name.trim() !== ''
+        ? file.name
+        : `capture-${new Date().toISOString().replace(/[.:]/g,'-')}`;
+      const ext = (file.name || '').toLowerCase();
+      const isJson = ext.endsWith('.json');
+      const isCsv = ext.endsWith('.csv');
+      const isTextLike = isJson || isCsv || (file.type && file.type.startsWith('text/'));
+      let textPayload = '';
+      if(isTextLike){
+        try{
+          textPayload = await file.text();
+        }catch(_err){
+          textPayload = '';
+        }
+      }
+
+      if(isTextLike && textPayload){
+        try{
+          const rows = isJson ? JSON.parse(textPayload) : parseCSV(textPayload);
+          applyScheduleData(rows, { label: `Loaded: ${baseName}` });
+          return;
+        }catch(err){
+          console.warn('Local schedule parsing failed, fallback to AI', err);
+        }
+      }
+
+      try{
+        await normalizeScheduleViaAI({ files: [file], text: textPayload, label: baseName, source });
+      }catch(err){
+        setInfo(`⚠️ 스케줄 정규화 실패: ${err.message}`, 'danger');
+      }
+    }
+
+    let schedulePasteHover = false;
+    if(scheduleDropTarget){
+      ['dragenter','dragover'].forEach(evt=>{
+        scheduleDropTarget.addEventListener(evt,(event)=>{
+          event.preventDefault();
+          scheduleLabel?.classList.add('drag-active');
+        });
+      });
+      ['dragleave','dragend'].forEach(evt=>{
+        scheduleDropTarget.addEventListener(evt,()=>{
+          scheduleLabel?.classList.remove('drag-active');
+        });
+      });
+      scheduleDropTarget.addEventListener('drop', async (event)=>{
+        event.preventDefault();
+        scheduleLabel?.classList.remove('drag-active');
+        const file = event.dataTransfer?.files?.[0];
+        if(file){
+          await processScheduleFile(file, 'drop');
+        }
+      });
+      scheduleDropTarget.addEventListener('mouseenter', ()=>{ schedulePasteHover = true; });
+      scheduleDropTarget.addEventListener('mouseleave', ()=>{ schedulePasteHover = false; });
+    }
 
     async function processWeatherFile(file, source = 'upload'){
       if(!file) return;
@@ -777,40 +941,12 @@
       }
     }
 
-    scheduleInput.addEventListener('change', (e)=>{
-      if(e.target.files.length===0) return;
-      const f = e.target.files[0];
-      const reader = new FileReader();
-      reader.onload = () => {
-        try{
-          let rows;
-          if(f.name.toLowerCase().endsWith('.json')){
-            const data = JSON.parse(reader.result);
-            if(!Array.isArray(data)) throw new Error('JSON must be an array');
-            rows = data;
-          } else {
-            rows = parseCSV(reader.result);
-          }
-          const normalized = rows.map(r=>{
-            const id = r.id || r.Voyage || r.voyage || r.trip || '';
-            const cargo = r.cargo || r.Cargo || '';
-            const etd = r.etd || r.ETD || r.departure || '';
-            const eta = r.eta || r.ETA || r.arrival || '';
-            const status = r.status || r.Status || 'Scheduled';
-            const etdDt = parseISO(etd), etaDt = parseISO(eta);
-            if(!id || !cargo || !etdDt || !etaDt) throw new Error('Missing required fields (id,cargo,etd,eta)');
-            return { id:String(id).trim(), cargo:String(cargo).trim(), etd:fmtIso(etdDt), eta:fmtIso(etaDt), status:String(status).trim() };
-          });
-          voyageSchedule = normalized.sort((a,b)=> +new Date(a.etd)-+new Date(b.etd));
-          scheduleLabel.textContent = `Loaded: ${f.name}`;
-          setInfo(`스케줄 ${normalized.length}건 로드 완료.`, 'info');
-          renderSchedule();
-        }catch(err){
-          console.error(err);
-          setInfo(`⚠️ 스케줄 파일 오류: ${err.message}`, 'danger');
-        }
-      };
-      reader.readAsText(f);
+    scheduleInput?.addEventListener('change', async (e)=>{
+      const inputEl = e.target;
+      const file = inputEl?.files?.[0];
+      if(!file) return;
+      await processScheduleFile(file, 'upload');
+      inputEl.value = '';
     });
 
     weatherInput.addEventListener('change', async (event)=>{
@@ -990,6 +1126,15 @@
 
       event.preventDefault();
       addAttachmentsFromFileList(files);
+      if(schedulePasteHover){
+        try{
+          await processScheduleFile(files[0], 'paste');
+        }catch(err){
+          console.error('Clipboard schedule normalization failed', err);
+          setInfo(`⚠️ 클립보드 스케줄 처리 실패: ${err.message}`, 'danger');
+        }
+        return;
+      }
       try{
         await processWeatherFile(files[0], 'paste');
       }catch(err){
