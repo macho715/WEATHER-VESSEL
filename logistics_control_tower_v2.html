@@ -29,6 +29,9 @@
     .pill-success{background:rgba(34,197,94,.18);border-color:rgba(34,197,94,.4);color:#bbf7d0}
     .pill-warn{background:rgba(234,179,8,.22);border-color:rgba(234,179,8,.45);color:#fef3c7}
     .pill-danger{background:rgba(248,113,113,.2);border-color:rgba(248,113,113,.45);color:#fecaca}
+    .gantt-track{height:.4rem;background:rgba(30,41,59,.85);border-radius:9999px;overflow:hidden}
+    .gantt-fill{height:100%;background:linear-gradient(90deg,#38bdf8,#818cf8);border-radius:9999px;transition:width .3s ease}
+    .drag-active{border-color:rgba(14,165,233,.75)!important;box-shadow:0 0 0 1px rgba(14,165,233,.35)}
     #assistant-dropzone{transition:background .2s ease,border-color .2s ease}
     #assistant-dropzone.drop-active{border-color:rgba(14,165,233,.75);background:rgba(14,165,233,.08);box-shadow:0 0 0 1px rgba(14,165,233,.2)}
     #assistant-attachments img{box-shadow:0 4px 12px rgba(15,23,42,.65)}
@@ -44,7 +47,7 @@
     }
   </style>
 </head>
-<body class="p-4" data-api-base-url="http://localhost:8000">
+  <body class="p-4" data-api-base-url="http://localhost:8002">
   <!-- Skip link for keyboard users -->
   <a href="#main" class="sr-only" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;"
      onfocus="this.style.position='static';this.style.width='auto';this.style.height='auto';this.style.padding='0.5rem 0.75rem';this.style.background='#0ea5e9';this.style.color='#000';this.style.borderRadius='8px';">
@@ -63,7 +66,7 @@
             <div class="pill pill-warn" id="marineBadge" title="Marine snapshot">Hs: -- m · Wind: -- kt</div>
           </div>
         </div>
-        <div id="vessel-info" class="space-y-4"><p class="text-slate-400">Loading vessel data...</p></div>
+        <div id="vessel-info" class="space-y-4 max-h-[320px] overflow-y-auto pr-2"><p class="text-slate-400">Loading vessel data...</p></div>
 
         <div class="grid grid-cols-2 gap-2 mt-4">
           <button id="briefing-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-3 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm"
@@ -90,6 +93,10 @@
             <div>API 상태 <span class="chip" id="api-status">API: Offline</span></div>
             <button id="api-config-btn" class="px-2 py-1 rounded bg-slate-800/70 hover:bg-slate-700 text-slate-100 border border-slate-600 text-[11px] font-semibold">API 설정</button>
           </div>
+          <label class="flex items-center gap-2 text-[11px] text-slate-300 mt-2">
+            <input type="checkbox" id="opt-mw4-wait" checked class="accent-sky-500" />
+            AGI 대기 금지(출항 지연 전략)
+          </label>
         </div>
         <div class="bg-slate-800/60 border border-slate-700 rounded-lg p-3 text-xs text-slate-200" aria-live="polite">
           <div class="flex items-center justify-between">
@@ -124,6 +131,8 @@
                 <th scope="col" id="th-eta" role="columnheader">ETA</th>
                 <th scope="col" id="th-status" role="columnheader">Status</th>
                 <th scope="col" id="th-ioi" role="columnheader">IOI (0–100)</th>
+                <th scope="col" id="th-sail" role="columnheader">Sail</th>
+                <th scope="col" id="th-discharge" role="columnheader">Discharge</th>
                 <th scope="col" id="th-decision" role="columnheader">Go/No-Go</th>
               </tr>
             </thead>
@@ -212,7 +221,7 @@
 
   document.addEventListener('DOMContentLoaded', () => {
     const apiStorageKey = 'hvdc.apiBaseUrl';
-    const defaultApiBase = window.APP_CONFIG?.apiBase ?? document.body.dataset.apiBaseUrl ?? 'http://localhost:8000';
+    const defaultApiBase = window.APP_CONFIG?.apiBase       ?? document.body.dataset.apiBaseUrl       ?? (window.location.origin?.startsWith('http') ? window.location.origin : 'http://localhost:8002');
     let apiBase = localStorage.getItem(apiStorageKey) || defaultApiBase;
     const apiStatusChip = document.getElementById('api-status');
     const apiConfigBtn = document.getElementById('api-config-btn');
@@ -438,53 +447,67 @@
     }
 
     async function renderSchedule(){
-      const scheduleBody = document.getElementById('schedule-body');
-      if (!scheduleBody) return;
-      
-      document.getElementById('schedule-container').setAttribute('aria-busy','true');
-      scheduleBody.innerHTML = '';
-      
-      const marineSnap = await updateMarineForLeg('Jebel Ali');
-      const baseIoi = Number.isFinite(marineSnap?.ioi) ? Number(marineSnap.ioi) : 50;
+        const scheduleBody = document.getElementById('schedule-body');
+        if (!scheduleBody) return;
 
-      for (let index = 0; index < voyageSchedule.length; index += 1) {
-        const v = voyageSchedule[index];
-        let c="text-slate-300", pill="";
-        if(v.status==="In Transit") { c="text-blue-300"; pill='<span class="tag">Sailing</span>'; }
-        else if(v.status==="Delayed") { c="text-rose-300"; pill='<span class="tag">Delayed</span>'; }
-        else if(v.status==="Completed") { c="text-emerald-300"; pill='<span class="tag">Arrived</span>'; }
-        const hi=v.id===vesselData.currentVoyageId ? "row-current" : "";
+        document.getElementById('schedule-container').setAttribute('aria-busy','true');
+        scheduleBody.innerHTML = '';
 
-        // Marine data for this port (simplified for current structure)
-        const ioi = baseIoi;
-        const decision = ioi >= 75 ? { tag: 'Go', tone: 'success' } :
-                        ioi >= 55 ? { tag: 'Caution', tone: 'warn' } :
-                        { tag: 'No-Go', tone: 'danger' };
-        const formattedIoi = Number.isFinite(ioi) ? Number(ioi).toFixed(2) : '50.00';
+        const marineSnap = await updateMarineForLeg('Jebel Ali');
+        const baseIoi = Number.isFinite(marineSnap?.ioi) ? Number(marineSnap.ioi) : 50;
+        const hasWeatherLevels = weatherWindows.length > 0;
 
-        const row = document.createElement('tr');
-        row.id = `voyage-${v.id}`;
-        row.className = `border-t border-slate-700 ${hi}`;
-        row.setAttribute('role', 'row');
-        row.innerHTML = `
-          <td class="p-2 font-bold" role="gridcell" aria-describedby="th-voyage">${v.id}</td>
-          <td class="p-2" role="gridcell" aria-describedby="th-cargo">${v.cargo}</td>
-          <td class="p-2" role="gridcell" aria-describedby="th-etd">${toLocal(v.etd)}</td>
-          <td class="p-2" role="gridcell" aria-describedby="th-eta">${toLocal(v.eta)}</td>
-          <td class="p-2 ${c} font-semibold" role="gridcell" aria-describedby="th-status">${v.status} ${pill}</td>
-          <td class="p-2" role="gridcell" aria-describedby="th-ioi">${formattedIoi}</td>
-          <td class="p-2" role="gridcell" aria-describedby="th-decision"><span class="pill pill-${decision.tone}">${decision.tag}</span></td>
-        `;
-        scheduleBody.appendChild(row);
+        for (let index = 0; index < voyageSchedule.length; index += 1) {
+          const v = voyageSchedule[index];
+          let c="text-slate-300", pill="";
+          if(v.status==="In Transit") { c="text-blue-300"; pill='<span class="tag">Sailing</span>'; }
+          else if(v.status==="Delayed") { c="text-rose-300"; pill='<span class="tag">Delayed</span>'; }
+          else if(v.status==="Completed") { c="text-emerald-300"; pill='<span class="tag">Arrived</span>'; }
+          const hi=v.id===vesselData.currentVoyageId ? "row-current" : "";
+
+          const etdDate = new Date(v.etd);
+          const etaDate = new Date(v.eta);
+          const spanHours = Math.max(1, Math.round((+etaDate - +etdDate) / 36e5));
+          const spanWidth = clamp((spanHours / 24) * 100, 5, 100).toFixed(2);
+          const gantt = `<div class="gantt-track mt-1" aria-hidden="true"><div class="gantt-fill" style="width:${spanWidth}%"></div></div>`;
+
+          const ioi = Number.isFinite(v.ioi) ? Number(v.ioi) : baseIoi;
+          const decision = ioi >= 75 ? { tag: 'Go', tone: 'success' } :
+                          ioi >= 55 ? { tag: 'Caution', tone: 'warn' } :
+                          { tag: 'No-Go', tone: 'danger' };
+          const formattedIoi = Number.isFinite(ioi) ? ioi.toFixed(2) : baseIoi.toFixed(2);
+
+          const sailLv = hasWeatherLevels ? findSailLevelAt(etdDate) : 'OK';
+          const disLv = hasWeatherLevels ? findDischargeLevelAt(etaDate) : 'OK';
+          const sailBadge = formatLevelBadge(sailLv, hasWeatherLevels);
+          const disBadge = formatLevelBadge(disLv, hasWeatherLevels);
+
+          const row = document.createElement('tr');
+          row.id = `voyage-${v.id}`;
+          row.className = `border-t border-slate-700 ${hi}`;
+          row.setAttribute('role', 'row');
+          row.innerHTML = `
+            <td class="p-2 font-bold" role="gridcell" aria-describedby="th-voyage">${v.id}${gantt}</td>
+            <td class="p-2" role="gridcell" aria-describedby="th-cargo">${v.cargo}</td>
+            <td class="p-2" role="gridcell" aria-describedby="th-etd">${toLocal(v.etd)}</td>
+            <td class="p-2" role="gridcell" aria-describedby="th-eta">${toLocal(v.eta)}</td>
+            <td class="p-2 ${c} font-semibold" role="gridcell" aria-describedby="th-status">${v.status} ${pill}</td>
+            <td class="p-2" role="gridcell" aria-describedby="th-ioi">${formattedIoi}</td>
+            <td class="p-2" role="gridcell" aria-describedby="th-sail">${sailBadge}</td>
+            <td class="p-2" role="gridcell" aria-describedby="th-discharge">${disBadge}</td>
+            <td class="p-2" role="gridcell" aria-describedby="th-decision"><span class="pill pill-${decision.tone}">${decision.tag}</span></td>
+          `;
+          scheduleBody.appendChild(row);
+        }
+
+        document.getElementById('schedule-container').setAttribute('aria-busy','false');
+
+        if(vesselData.currentVoyageId){
+          const row=document.getElementById(`voyage-${vesselData.currentVoyageId}`);
+          if(row) row.scrollIntoView({block:'center',behavior:'smooth'});
+        }
       }
-      
-      document.getElementById('schedule-container').setAttribute('aria-busy','false');
 
-      if(vesselData.currentVoyageId){
-        const row=document.getElementById(`voyage-${vesselData.currentVoyageId}`);
-        if(row) row.scrollIntoView({block:'center',behavior:'smooth'});
-      }
-    }
 
     function setInfo(msgHtml, tone='info'){
       const color = tone==='warn' ? 'bg-yellow-900 border-yellow-500 text-yellow-100'
@@ -493,68 +516,128 @@
       alertContainer.innerHTML = `<div class="${color} px-4 py-3 rounded border">${msgHtml}</div>`;
     }
 
-    const LIM = {
-      waveWarnM: 1.75, waveNoGoM: 2.25,
-      windWarnKt: 24, windNoGoKt: 30,
-      visNoGoKm: 1.0
+    const HOURS_TO_MS = 36e5;
+    const SHIFT_STEP_HOURS = 6;
+    const LIMITS = {
+      sail: {
+        waveWarnM: 1.25,
+        waveNoGoM: 1.75,
+        windWarnKt: 22,
+        windNoGoKt: 28,
+        visNoGoKm: 1.0
+      },
+      discharge: {
+        waveWarnM: 1.00,
+        waveNoGoM: 1.25,
+        windWarnKt: 20,
+        windNoGoKt: 26,
+        visNoGoKm: 1.0
+      }
     };
+
+    function levelByLimits(wv, wd, vs, limset){
+      if(!Number.isFinite(wv) || !Number.isFinite(wd) || !Number.isFinite(vs)) return 'OK';
+      if (wv >= limset.waveNoGoM || wd >= limset.windNoGoKt || vs <= limset.visNoGoKm) return 'NoGo';
+      if (wv >= limset.waveWarnM || wd >= limset.windWarnKt) return 'Warn';
+      return 'OK';
+    }
 
     function buildWeatherWindows(rows){
       weatherWindows = rows.map(r=>{
         const start = parseISO(r.start);
         const end   = parseISO(r.end);
-        const wv = parseNum(r.wave_m);
-        const wd = parseNum(r.wind_kt);
-        const vs = parseNum(r.vis_km);
-        let level = 'None';
-        if(isFinite(wv) && isFinite(wd) && isFinite(vs)){
-          if(wv >= LIM.waveNoGoM || wd >= LIM.windNoGoKt || vs <= LIM.visNoGoKm) level='NoGo';
-          else if(wv >= LIM.waveWarnM || wd >= LIM.windWarnKt) level='Warn';
-        }
-        return { start, end, level, waveM:wv, windKt:wd, visKm:vs };
-      }).filter(w => w.start && w.end);
+        const wv = parseNum(r.wave_m ?? r.waveM ?? r.wave);
+        const wd = parseNum(r.wind_kt ?? r.windKt ?? r.wind);
+        const vs = parseNum(r.vis_km ?? r.visKm ?? r.visibility);
+        if(!start || !end) return null;
+
+        const lvlSail = levelByLimits(wv, wd, vs, LIMITS.sail);
+        const lvlDis  = levelByLimits(wv, wd, vs, LIMITS.discharge);
+
+        return { start, end, level: lvlDis, waveM: wv, windKt: wd, visKm: vs, lvlSail, lvlDis };
+      }).filter(Boolean);
     }
 
-    function findWeatherLevelAt(dt){
+    function findSailLevelAt(dt){
       const t = +dt;
       const w = weatherWindows.find(win => t>= +win.start && t<= +win.end);
-      return w ? w.level : 'None';
+      return w ? w.lvlSail : 'OK';
+    }
+    function findDischargeLevelAt(dt){
+      const t = +dt;
+      const w = weatherWindows.find(win => t>= +win.start && t<= +win.end);
+      return w ? w.lvlDis : 'OK';
     }
 
-    function relHours(a,b){ return ( (+a)-(+b) )/36e5; }
+    function formatLevelBadge(level, hasData){
+      if(!hasData) return '<span class="pill">—</span>';
+      if(level === 'NoGo') return '<span class="pill pill-danger">No-Go</span>';
+      if(level === 'Warn') return '<span class="pill pill-warn">Warn</span>';
+      return '<span class="pill pill-success">OK</span>';
+    }
+
+    function relHours(a,b){ return ((+a)-(+b))/36e5; }
+
+    function hoursToMs(h){ return h * HOURS_TO_MS; }
 
     function applyWeatherToSchedule(){
       if(weatherWindows.length===0){ linkageBadge.textContent='Linked to Weather: OFF'; return; }
       linkageBadge.textContent='Linked to Weather: ON';
 
+      const mw4Wait = document.getElementById('opt-mw4-wait')?.checked ?? true;
       voyageSchedule.sort((x,y)=> +new Date(x.etd) - +new Date(y.etd));
 
       let lastETA = null;
-      let changes = [];
+      const changes = [];
 
       for(let i=0;i<voyageSchedule.length;i++){
         const v = voyageSchedule[i];
         let etd = new Date(v.etd);
         let eta = new Date(v.eta);
+
         if(lastETA && +etd < +lastETA){
           const deltaH = Math.ceil(relHours(lastETA, etd));
-          etd = new Date(+etd + deltaH*36e5);
-          eta = new Date(+eta + deltaH*36e5);
-          changes.push(`${v.id}: shifted +${deltaH}h to keep sequence`);
+          etd = new Date(+etd + hoursToMs(deltaH));
+          eta = new Date(+eta + hoursToMs(deltaH));
+          changes.push(`${v.id}: sequence align +${deltaH}h`);
         }
 
-        const lvlAtETD = findWeatherLevelAt(etd);
-        const lvlAtETA = findWeatherLevelAt(eta);
-
-        if(lvlAtETD==='NoGo'){
-          etd = new Date(+etd + 24*36e5);
-          eta = new Date(+eta + 24*36e5);
-          v.status = 'Delayed';
-          changes.push(`${v.id}: ETD NoGo → +24h`);
-        }else if(lvlAtETA==='NoGo'){
-          eta = new Date(+eta + 12*36e5);
-          v.status = 'Delayed';
-          changes.push(`${v.id}: ETA NoGo → +12h`);
+        if(mw4Wait){
+          let guard = 0;
+          while(guard++ < 200){
+            const sailLv = findSailLevelAt(etd);
+            const disLv = findDischargeLevelAt(eta);
+            if(sailLv === 'NoGo'){
+              etd = new Date(+etd + hoursToMs(SHIFT_STEP_HOURS));
+              eta = new Date(+eta + hoursToMs(SHIFT_STEP_HOURS));
+              continue;
+            }
+            if(disLv !== 'OK'){
+              etd = new Date(+etd + hoursToMs(SHIFT_STEP_HOURS));
+              eta = new Date(+eta + hoursToMs(SHIFT_STEP_HOURS));
+              continue;
+            }
+            break;
+          }
+          if(guard >= 200){
+            changes.push(`${v.id}: weather seek exceeded`);
+          }
+          v.status = 'Scheduled';
+        } else {
+          const sailLv = findSailLevelAt(etd);
+          const disLv = findDischargeLevelAt(eta);
+          if(sailLv === 'NoGo'){
+            etd = new Date(+etd + hoursToMs(24));
+            eta = new Date(+eta + hoursToMs(24));
+            v.status = 'Delayed';
+            changes.push(`${v.id}: ETD No-Go → +24h`);
+          } else if(disLv === 'NoGo'){
+            eta = new Date(+eta + hoursToMs(12));
+            v.status = 'Delayed';
+            changes.push(`${v.id}: ETA No-Go → +12h`);
+          } else if(disLv === 'Warn'){
+            changes.push(`${v.id}: ETA warning — monitor conditions`);
+          }
         }
 
         v.etd = fmtIso(etd);
@@ -569,6 +652,7 @@
       }
       renderSchedule();
     }
+
 
     function chooseActiveVoyage(now){
       return voyageSchedule.find(v => v.status==="In Transit" || ((new Date(v.etd)<=now) && (v.status==="Scheduled" || v.status==="Delayed")));
@@ -717,6 +801,16 @@
       await processWeatherFile(files[0], 'upload');
       weatherInput.value = '';
     });
+
+    const mw4WaitToggle = document.getElementById('opt-mw4-wait');
+    if(mw4WaitToggle){
+      mw4WaitToggle.addEventListener('change', ()=>{
+        if(weatherWindows.length){
+          applyWeatherToSchedule();
+        }
+      });
+    }
+
 
     if(weatherDropTarget){
       ['dragenter','dragover'].forEach(evt=>{
@@ -936,7 +1030,8 @@
         weather_windows: weatherWindows.map(w=>({
           start: w.start ? w.start.toISOString?.() || w.start : w.start,
           end: w.end ? w.end.toISOString?.() || w.end : w.end,
-          level: w.level,
+          sail_level: w.lvlSail,
+          discharge_level: w.lvlDis,
           waveM: w.waveM,
           windKt: w.windKt,
           visKm: w.visKm

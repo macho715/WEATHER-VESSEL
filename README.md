@@ -16,6 +16,7 @@ A comprehensive maritime logistics control system with real-time vessel tracking
 - Inline attachment tray mirrors pasted captures for quick review
 - IOI (Index of Operability) calculation (0-100 scale)
 - Go/No-Go decision support based on weather conditions
+- Separate sail vs discharge thresholds for Sea State and wind/visibility decisions
 - Real-time marine snapshot display (wave height, wind speed)
 
 ### 🤖 AI-Powered Features
@@ -29,6 +30,7 @@ A comprehensive maritime logistics control system with real-time vessel tracking
 ### 📊 Schedule Management
 - Voyage schedule management with CSV/JSON import
 - Weather-linked schedule adjustments
+- Sail/Discharge readiness badges with per-leg mini-Gantt timeline
 - Risk simulation and control
 - Live status updates
 
@@ -70,7 +72,7 @@ export OPENAI_API_KEY="your-openai-api-key"
 
 4. Start the FastAPI server:
 ```bash
-python -m uvicorn openai_gateway:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn openai_gateway:app --host 0.0.0.0 --port 8002 --reload
 ```
 
 5. Open `logistics_control_tower_v2.html` in your browser
@@ -85,6 +87,7 @@ python -m uvicorn openai_gateway:app --host 0.0.0.0 --port 8000 --reload
 - **Weather Screenshots**: Paste from clipboard or drag-and-drop captures directly into the weather uploader
 - **AI Assistant**: Ask questions about logistics operations
 - **Daily Briefing**: Generate AI-powered operational summaries
+- **AGI 대기 금지 토글**: 출항 지연 전략 스위치를 켜서 하역 가능 시점까지 MW4에서 대기하도록 자동 조정
 
 ### Advanced Features
 - **IOI Analysis**: Automatic operability assessment

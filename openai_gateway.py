@@ -8,7 +8,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Iterable, List, Literal, Sequence
+from typing import Any, Dict, Iterable, List, Literal, Sequence, cast
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,8 +39,8 @@ class BriefingRequest(LogiBaseModel):
     vessel_name: str
     vessel_status: str
     current_voyage: str | None = None
-    schedule: List[dict] = Field(default_factory=list)
-    weather_windows: List[dict] = Field(default_factory=list)
+    schedule: List[Dict[str, Any]] = Field(default_factory=list)
+    weather_windows: List[Dict[str, Any]] = Field(default_factory=list)
     model: str = Field(default="gpt-4.1-mini", max_length=64)
 
 
@@ -54,6 +54,9 @@ class AssistantResponse(LogiBaseModel):
     """AI 어시스턴트 응답. | AI assistant response."""
 
     answer: str
+
+
+MessagePayload = List[Dict[str, Any]]
 
 
 _async_client: AsyncOpenAI | None = None
@@ -115,7 +118,7 @@ def _pdf_to_text(payload: bytes) -> str:
     return "\n".join(text_chunks)
 
 
-def _image_to_base64(file: UploadFile, payload: bytes) -> dict:
+def _image_to_base64(file: UploadFile, payload: bytes) -> Dict[str, Any]:
     """이미지를 base64로 인코딩. | Encode image to base64."""
 
     data_url = "data:{media};base64,{payload}".format(
@@ -127,10 +130,10 @@ def _image_to_base64(file: UploadFile, payload: bytes) -> dict:
 
 def _build_user_content(
     prompt: str, files: Iterable[UploadFile], raw_payloads: List[bytes]
-) -> List[dict[str, Any]]:
+) -> MessagePayload:
     """사용자 메시지 콘텐츠 구성. | Compose user content payload."""
 
-    content: List[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    content: MessagePayload = [{"type": "text", "text": prompt}]
     for idx, file in enumerate(files):
         data = raw_payloads[idx]
         filename = file.filename or f"attachment-{idx+1}"
@@ -177,7 +180,7 @@ def _extract_output_text(response: Any) -> str:
     outputs = getattr(response, "output", None)
     if outputs:
         texts: List[str] = []
-        for item in outputs:
+        for item in cast(Iterable[Any], outputs):
             if getattr(item, "type", None) != "message":
                 continue
             message = getattr(item, "message", None)
@@ -191,23 +194,34 @@ def _extract_output_text(response: Any) -> str:
         if texts:
             return "\n".join(texts)
 
-    try:
-        return response.choices[0].message.content
-    except (AttributeError, IndexError, KeyError):
+    choices = cast(Sequence[Any], getattr(response, "choices", []))
+    if not choices:
         return "Error: Could not extract response text"
+    message_obj = getattr(choices[0], "message", None)
+    if message_obj is None:
+        return "Error: Could not extract response text"
+    message_content = getattr(message_obj, "content", None)
+    if isinstance(message_content, str):
+        return message_content
+    if message_content is None:
+        return "Error: Could not extract response text"
+    return str(message_content)
 
 
-async def _call_openai(messages: List[dict[str, Any]], *, model: str) -> Any:
+async def _call_openai(messages: MessagePayload, *, model: str) -> Any:
     """OpenAI Responses API 호출. | Invoke OpenAI Responses API."""
 
     client = _require_client()
-    return await client.responses.create(model=model, input=messages)
+    return await client.responses.create(
+        model=model,
+        input=cast(Any, messages),
+    )
 
 
-def _build_history(messages: Sequence[ChatMessage]) -> List[dict[str, Any]]:
+def _build_history(messages: Sequence[ChatMessage]) -> MessagePayload:
     """Chat Completion용 메시지 배열 구성. | Build chat completion messages."""
 
-    history: List[dict[str, Any]] = []
+    history: MessagePayload = []
     for item in messages:
         history.append(
             {
@@ -231,7 +245,7 @@ app.add_middleware(
 
 
 @app.get("/health")
-async def healthcheck() -> dict:
+async def healthcheck() -> Dict[str, str]:
     """헬스체크. | Service health check."""
 
     return {"status": "ok"}
