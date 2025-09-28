@@ -11,6 +11,7 @@ A comprehensive maritime logistics control system with real-time vessel tracking
 
 ### 🌤️ Weather Integration
 - Marine weather data from Open-Meteo API
+- ADNOC weather screenshots interpreted by AI for rapid risk flagging
 - IOI (Index of Operability) calculation (0-100 scale)
 - Go/No-Go decision support based on weather conditions
 - Real-time marine snapshot display (wave height, wind speed)
@@ -20,6 +21,7 @@ A comprehensive maritime logistics control system with real-time vessel tracking
 - AI assistant for logistics questions
 - Risk analysis and mitigation recommendations
 - File upload support (PDF, images, CSV)
+- Dedicated AI weather insight panel for screenshot uploads
 
 ### 📊 Schedule Management
 - Voyage schedule management with CSV/JSON import
@@ -56,8 +58,10 @@ cd WEATHER-VESSEL
 pip install -r requirements.txt
 ```
 
-3. Set up environment variables:
+3. Set up environment variables (supports `.env` file in project root):
 ```bash
+echo "OPENAI_API_KEY=your-openai-api-key" >> .env
+# or export directly for the current shell
 export OPENAI_API_KEY="your-openai-api-key"
 ```
 
@@ -73,7 +77,7 @@ python -m uvicorn openai_gateway:app --host 0.0.0.0 --port 8000 --reload
 ### Basic Operations
 - **Vessel Tracking**: View real-time vessel position and route
 - **Schedule Upload**: Import voyage schedules via CSV/JSON
-- **Weather Data**: Upload weather data for risk analysis
+- **Weather Data**: Upload weather data (CSV) or ADNOC screenshots for risk analysis
 - **AI Assistant**: Ask questions about logistics operations
 - **Daily Briefing**: Generate AI-powered operational summaries
 
