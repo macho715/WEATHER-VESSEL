@@ -1,129 +1,119 @@
-# Weather Vessel - Logistics Control Tower v2.5
+# Weather Vessel CLI
 
-A comprehensive maritime logistics control system with real-time vessel tracking, weather integration, and AI-powered decision support.
+Weather Vessel delivers marine weather intelligence, risk scoring, and voyage scheduling for logistics control towers. The CLI aggregates multiple providers (Stormglass, Open-Meteo Marine, NOAA WaveWatch III, Copernicus) with automatic fallback, disk caching, and timezone-safe scheduling in **Asia/Dubai**.
 
-## Features
+## Key Features
 
-### 🗺️ Real-time Vessel Tracking
-- Interactive Leaflet map with vessel route visualization
-- Real-time position updates and progress tracking
-- Route optimization and ETA calculations
-
-### 🌤️ Weather Integration
-- Marine weather data from Open-Meteo API
-- ADNOC weather screenshots interpreted by AI for rapid risk flagging
-- Clipboard paste and drag-and-drop ingestion for screenshot uploads
-- IOI (Index of Operability) calculation (0-100 scale)
-- Go/No-Go decision support based on weather conditions
-- Real-time marine snapshot display (wave height, wind speed)
-
-### 🤖 AI-Powered Features
-- Daily logistics briefing generation
-- AI assistant for logistics questions
-- Risk analysis and mitigation recommendations
-- File upload support (PDF, images, CSV)
-- Dedicated AI weather insight panel for screenshot uploads
-
-### 📊 Schedule Management
-- Voyage schedule management with CSV/JSON import
-- Weather-linked schedule adjustments
-- Risk simulation and control
-- Live status updates
-
-### ♿ Accessibility (WCAG 2.2 AA)
-- Keyboard navigation support
-- Screen reader compatibility
-- High contrast mode support
-- 44px minimum touch targets
-- Skip links and ARIA attributes
-
-## Technology Stack
-
-- **Frontend**: HTML5, CSS3, JavaScript (ES6+)
-- **Styling**: Tailwind CSS
-- **Maps**: Leaflet.js 1.9.4
-- **Backend**: FastAPI (Python)
-- **AI Integration**: OpenAI API
-- **Performance**: Web Workers, requestIdleCallback
+- 🌊 **Multi-provider marine data** with retries, quota-aware backoff, and cache fallback (≤3 h)
+- 🧭 **Risk assessment** from significant wave height, wind speed/direction, and swell parameters
+- 📅 **7-day voyage schedule** with CSV and ICS exports and fixed 2-decimal metrics
+- 📣 **Notifications** via Email (default), Slack, and Telegram with dry-run support
+- ⏱️ **Twice-daily checks** aligned to 06:00 / 17:00 Asia/Dubai for automated alerts
 
 ## Installation
 
-1. Clone the repository:
 ```bash
-git clone https://github.com/macho715/WEATHER-VESSEL.git
-cd WEATHER-VESSEL
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .[all]
+cp .env.example .env
 ```
 
-2. Install Python dependencies:
-```bash
-pip install -r requirements.txt
-```
+Set the relevant API keys and notification endpoints in `.env`. Never commit real credentials.
 
-3. Set up environment variables (supports `.env` file in project root):
-```bash
-echo "OPENAI_API_KEY=your-openai-api-key" >> .env
-# or export directly for the current shell
-export OPENAI_API_KEY="your-openai-api-key"
-```
+### Required Environment Variables
 
-4. Start the FastAPI server:
-```bash
-python -m uvicorn openai_gateway:app --host 0.0.0.0 --port 8000 --reload
-```
+| Variable | Description |
+| --- | --- |
+| `WV_STORMGLASS_API_KEY` | Stormglass API key |
+| `WV_OPEN_METEO_ENDPOINT` | Optional custom Open-Meteo base URL |
+| `WV_NOAA_WW3_ENDPOINT` | Optional NOAA WaveWatch III JSON endpoint |
+| `WV_COPERNICUS_ENDPOINT` / `WV_COPERNICUS_TOKEN` | Optional Copernicus API configuration |
+| `WV_SMTP_*` | SMTP host/port/credentials for email |
+| `WV_EMAIL_RECIPIENTS` | Comma separated default recipients |
+| `WV_SLACK_WEBHOOK` | Slack webhook URL (optional) |
+| `WV_TELEGRAM_TOKEN` / `WV_TELEGRAM_CHAT_ID` | Telegram bot configuration |
+| `WV_OUTPUT_DIR` | Directory for generated CSV/ICS (default `outputs/`) |
 
-5. Open `logistics_control_tower_v2.html` in your browser
+Risk thresholds can be tuned via `WV_MEDIUM_WAVE_THRESHOLD`, `WV_HIGH_WAVE_THRESHOLD`, `WV_MEDIUM_WIND_THRESHOLD`, and `WV_HIGH_WIND_THRESHOLD`.
 
 ## Usage
 
-### Basic Operations
-- **Vessel Tracking**: View real-time vessel position and route
-- **Schedule Upload**: Import voyage schedules via CSV/JSON
-- **Weather Data**: Upload weather data (CSV) or ADNOC screenshots for risk analysis
-- **AI Assistant**: Ask questions about logistics operations
-- **Daily Briefing**: Generate AI-powered operational summaries
+All commands honor `.env` configuration and display values rounded to two decimal places.
 
-### Advanced Features
-- **IOI Analysis**: Automatic operability assessment
-- **Risk Simulation**: Test different scenarios
-- **Weather Linking**: Automatic schedule adjustments based on weather
-- **File Analysis**: Upload documents for AI analysis
+### Immediate risk snapshot
 
-## API Endpoints
+```bash
+wv check --now --route MW4-AGI
+wv check --now --lat 24.40 --lon 54.70 --hours 72
+```
 
-- `GET /health` - Health check
-- `POST /api/assistant` - AI assistant chat
-- `POST /api/briefing` - Generate daily briefing
+### Weekly schedule generation
 
-## Performance Optimizations
+```bash
+wv schedule --week --route MW4-AGI --vessel DUNE_SAND --vessel-speed 12 --route-distance 120 --cargo-hs-limit 2.5
+```
 
-- **Web Workers**: Marine data fetching in background threads
-- **Idle Callbacks**: Non-blocking UI updates
-- **Passive Event Listeners**: Optimized scroll/touch handling
-- **Lazy Loading**: Efficient resource management
+Outputs:
 
-## Accessibility Features
+- Table printed to STDOUT (Asia/Dubai timestamps)
+- `outputs/schedule_week.csv`
+- `outputs/schedule_week.ics`
 
-- **Keyboard Navigation**: Full keyboard support
-- **Screen Reader**: ARIA labels and roles
-- **High Contrast**: System preference detection
-- **Touch Targets**: 44px minimum size compliance
-- **Focus Management**: Proper focus handling in modals
+Override the export path with `WV_OUTPUT_DIR`.
 
-## Contributing
+### Notifications
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+```bash
+# Dry run with Slack + Telegram
+wv notify --route MW4-AGI --dry-run --slack --telegram
+
+# Email to explicit recipients
+wv notify --route MW4-AGI --email-to ops@example.com --email-to master@vessel.local
+```
+
+When no `--email-to` is provided, the CLI uses `WV_EMAIL_RECIPIENTS`.
+
+## Automation
+
+Schedule the twice-daily checks at **06:00** and **17:00 Asia/Dubai**.
+
+### Linux/macOS (cron)
+
+```
+0 6,17 * * * /usr/local/bin/wv notify --route MW4-AGI >> /var/log/wv.log 2>&1
+```
+
+### Windows Task Scheduler
+
+```
+schtasks /Create /SC DAILY /MO 1 /TN "WV_0600" /TR "wv notify --route MW4-AGI" /ST 06:00
+schtasks /Create /SC DAILY /MO 1 /TN "WV_1700" /TR "wv notify --route MW4-AGI" /ST 17:00
+```
+
+## Development
+
+```bash
+pip install -e .[all]
+pytest -q --cov=src
+black --check .
+isort --check-only .
+flake8 .
+mypy --strict src
+```
+
+### Running Smoke Tests
+
+```bash
+wv check --now --lat 24.40 --lon 54.70
+wv schedule --week --route MW4-AGI --vessel DUNE_SAND
+wv notify --dry-run --route MW4-AGI
+```
+
+## Caching Strategy
+
+Forecast results are cached on disk at `~/.wv/cache/` with a 3-hour TTL. Provider outages (timeouts, HTTP 429, 5xx) cause the manager to fall back to the next provider or last known cache hit.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- Open-Meteo for marine weather data
-- Leaflet for mapping functionality
-- OpenAI for AI capabilities
-- Tailwind CSS for styling framework
+MIT License. See `LICENSE` for details.

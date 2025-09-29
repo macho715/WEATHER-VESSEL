@@ -1,12 +1,19 @@
 # Changelog
 
 ## [Unreleased]
+
 ### Added
-- Enable AI weather insight panel with screenshot uploads analysed through the OpenAI gateway.
-- Support clipboard paste and drag-and-drop ingestion for ADNOC weather screenshots so control tower operators can analyse live captures without saving files manually.
-- Provide in-app API gateway configuration with persistent storage to target custom OpenAI deployment ports.
+- feat(cli): introduce `wv check`, `wv schedule --week`, and `wv notify` commands with Asia/Dubai alignment
+- feat(providers): integrate Stormglass, Open-Meteo Marine, NOAA WaveWatch III, Copernicus, and deterministic sample fallback with disk cache
+- feat(scheduler): generate 7-day ETD/ETA slots, CSV/ICS exports, and risk annotations with cargo limit escalation
+- feat(notify): deliver templated alerts via Email, Slack, and Telegram with dry-run mode and environment-based recipients
+- feat(docs): document cron/Task Scheduler automation, `.env` configuration, and developer workflow
+
+### Changed
+- refactor(core): centralize domain models with Pydantic `LogiBaseModel` and bilingual docstrings
+- refactor(cli): adopt Typer-based modular layout with dependency injection hooks for testing
+- refactor(config): move packaging to `pyproject.toml` with `[project.optional-dependencies].all`
 
 ### Fixed
-- Handle missing `OPENAI_API_KEY` gracefully by loading `.env` configuration and surfacing
-  configuration errors directly from the OpenAI gateway endpoints.
-- Surface detailed OpenAI gateway errors in the UI when assistant or briefing calls fail instead of returning opaque 502 messages.
+- fix(cache): ensure last-known forecast (≤3 h) is returned when providers fail or rate-limit
+- fix(risk): enforce 2-decimal rounding and environment-driven thresholds across CLI outputs
