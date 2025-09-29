@@ -589,8 +589,14 @@
           });
           voyageSchedule = normalized.sort((a,b)=> +new Date(a.etd)-+new Date(b.etd));
           scheduleLabel.textContent = `Loaded: ${f.name}`;
-          setInfo(`스케줄 ${normalized.length}건 로드 완료.`, 'info');
-          renderSchedule();
+          const baseMessage = `스케줄 ${normalized.length}건 로드 완료.`;
+          if(weatherWindows.length>0){
+            setInfo(`${baseMessage} 기상 연동을 다시 적용했습니다.`, 'info');
+            applyWeatherToSchedule();
+          }else{
+            setInfo(baseMessage, 'info');
+            renderSchedule();
+          }
         }catch(err){
           console.error(err);
           setInfo(`⚠️ 스케줄 파일 오류: ${err.message}`, 'danger');
