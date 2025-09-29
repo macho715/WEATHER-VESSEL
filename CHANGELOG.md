@@ -2,11 +2,17 @@
 
 ## [Unreleased]
 ### Added
-- Enable AI weather insight panel with screenshot uploads analysed through the OpenAI gateway.
-- Support clipboard paste and drag-and-drop ingestion for ADNOC weather screenshots so control tower operators can analyse live captures without saving files manually.
-- Provide in-app API gateway configuration with persistent storage to target custom OpenAI deployment ports.
+- Introduced `wv` Typer CLI with `check`, `schedule`, and `notify` workflows backed by Stormglass, Open-Meteo Marine, and NOAA WaveWatch III providers.
+- Implemented disk-backed cache (`~/.wv/cache`) with three-hour TTL and provider fallback/resilience logic.
+- Added weekly voyage planner that prints ASCII tables and exports CSV + ICS schedules with risk notes.
+- Delivered email, Slack, and Telegram notification adapters plus twice-daily Asia/Dubai auto-check scheduler.
+- Published `.env.example`, `plan.md`, and comprehensive pytest coverage for providers, risk rules, scheduler, notifications, and CLI.
+
+### Changed
+- Replaced legacy FastAPI usage docs with CLI-centric README guidance, including cron and Task Scheduler recipes.
+- Centralized configuration via `pyproject.toml` with strict tooling defaults (`black`, `isort`, `flake8`, `mypy`).
+- Normalized numeric outputs to two decimal places and ensured bilingual docstrings across new modules.
 
 ### Fixed
-- Handle missing `OPENAI_API_KEY` gracefully by loading `.env` configuration and surfacing
-  configuration errors directly from the OpenAI gateway endpoints.
-- Surface detailed OpenAI gateway errors in the UI when assistant or briefing calls fail instead of returning opaque 502 messages.
+- Resolved timezone drift by hard-coding Asia/Dubai context inside scheduling and notification flows.
+- Ensured provider outages (HTTP 429/timeout) automatically cascade to fallbacks or serve cached responses.

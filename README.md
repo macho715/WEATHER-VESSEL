@@ -1,129 +1,116 @@
-# Weather Vessel - Logistics Control Tower v2.5
+# Weather Vessel - Marine Operations CLI
 
-A comprehensive maritime logistics control system with real-time vessel tracking, weather integration, and AI-powered decision support.
+Weather Vessel delivers twice-daily marine risk intelligence for Abu Dhabi corridors. The new CLI orchestrates multi-provider marine forecasts, structured risk scoring, voyage schedule suggestions, and multi-channel alerting while preserving the existing UX expectations from previous releases.
 
-## Features
+## 🌊 Quick Start
 
-### 🗺️ Real-time Vessel Tracking
-- Interactive Leaflet map with vessel route visualization
-- Real-time position updates and progress tracking
-- Route optimization and ETA calculations
-
-### 🌤️ Weather Integration
-- Marine weather data from Open-Meteo API
-- ADNOC weather screenshots interpreted by AI for rapid risk flagging
-- Clipboard paste and drag-and-drop ingestion for screenshot uploads
-- IOI (Index of Operability) calculation (0-100 scale)
-- Go/No-Go decision support based on weather conditions
-- Real-time marine snapshot display (wave height, wind speed)
-
-### 🤖 AI-Powered Features
-- Daily logistics briefing generation
-- AI assistant for logistics questions
-- Risk analysis and mitigation recommendations
-- File upload support (PDF, images, CSV)
-- Dedicated AI weather insight panel for screenshot uploads
-
-### 📊 Schedule Management
-- Voyage schedule management with CSV/JSON import
-- Weather-linked schedule adjustments
-- Risk simulation and control
-- Live status updates
-
-### ♿ Accessibility (WCAG 2.2 AA)
-- Keyboard navigation support
-- Screen reader compatibility
-- High contrast mode support
-- 44px minimum touch targets
-- Skip links and ARIA attributes
-
-## Technology Stack
-
-- **Frontend**: HTML5, CSS3, JavaScript (ES6+)
-- **Styling**: Tailwind CSS
-- **Maps**: Leaflet.js 1.9.4
-- **Backend**: FastAPI (Python)
-- **AI Integration**: OpenAI API
-- **Performance**: Web Workers, requestIdleCallback
-
-## Installation
-
-1. Clone the repository:
 ```bash
 git clone https://github.com/macho715/WEATHER-VESSEL.git
 cd WEATHER-VESSEL
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .[all]
+cp .env.example .env
 ```
 
-2. Install Python dependencies:
+Edit `.env` with the credentials you have available:
+
+- `STORMGLASS_API_KEY` for premium wave/wind data
+- Optional fallbacks: `OPEN_METEO_ENDPOINT`, `NOAA_WW3_ENDPOINT`
+- SMTP/Slack/Telegram settings for downstream notifications
+- Risk threshold overrides (`WV_MEDIUM_HS`, `WV_HIGH_HS`, `WV_MEDIUM_WIND`, `WV_HIGH_WIND`)
+
+The CLI automatically loads `.env` values via `python-dotenv` and keeps sensitive tokens out of logs.
+
+## ☁️ Providers & Cache
+
+| Provider | Purpose | Environment keys |
+| --- | --- | --- |
+| Stormglass | Primary wave & wind source | `STORMGLASS_API_KEY`, `STORMGLASS_ENDPOINT` |
+| Open-Meteo Marine | Fallback wave/wind | `OPEN_METEO_ENDPOINT` |
+| NOAA WaveWatch III | Long-range swell backup | `NOAA_WW3_ENDPOINT` |
+
+All responses are normalized to `ForecastPoint` objects and cached for **3 hours** at `~/.wv/cache`. When APIs return `429` or time out, the service automatically rotates to the next provider or replays the freshest cache hit.
+
+## ⚓ CLI Commands
+
+| Command | Description |
+| --- | --- |
+| `wv check --now --lat 24.40 --lon 54.70` | Pulls the latest forecast (≥6 h window) and prints risk summary with 2-decimal metrics. |
+| `wv schedule --week --route MW4-AGI --vessel DUNE_SAND` | Generates a 7-day plan, prints a table, and saves `outputs/schedule_week.csv` + `outputs/schedule_week.ics`. |
+| `wv notify --route MW4-AGI` | Sends the most recent risk digest via configured channels; `--dry-run` previews without sending. |
+
+### Risk Model
+
+Default rules (overridable via `.env`):
+
+- **Medium**: Hs > 2.00 m **or** wind > 22.00 kt
+- **High**: Hs > 3.00 m **or** wind > 28.00 kt
+- Missing swell period/direction escalates conservatively.
+
+Output strings always show fixed two decimal places (`format_metric`).
+
+## 📅 Scheduling Auto Alerts
+
+Asia/Dubai time windows are enforced internally. To mirror ops practice, schedule jobs at 06:00 and 17:00 local time.
+
+**Linux/macOS (cron):**
+```cron
+0 6,17 * * * /usr/local/bin/wv notify --route MW4-AGI >> /var/log/wv.log 2>&1
+```
+
+**Windows Task Scheduler:**
+```powershell
+schtasks /Create /SC DAILY /MO 1 /TN "WV_0600" /TR "wv notify --route MW4-AGI" /ST 06:00
+schtasks /Create /SC DAILY /MO 1 /TN "WV_1700" /TR "wv notify --route MW4-AGI" /ST 17:00
+```
+
+Under the hood, `AutoCheckScheduler` ensures local-time alignment and composes the alert body with headline metrics and rule-based reasons.
+
+## ✉️ Notification Channels
+
+- **Email** (default): configure `WV_EMAIL_SENDER`, `WV_EMAIL_RECIPIENTS`, and SMTP credentials.
+- **Slack**: provide `WV_SLACK_WEBHOOK` for channel posts.
+- **Telegram**: set `WV_TELEGRAM_BOT_TOKEN` and `WV_TELEGRAM_CHAT_ID`.
+
+`NotificationManager` fans out messages with retry-safe logging, and `--dry-run` suppresses delivery while echoing the composed payload.
+
+## 🗓 Weekly Voyage Planner
+
+`VoyageScheduler` groups 168 hours of forecast data into daily ETD/ETA slots. The service:
+
+1. Computes average Hs/Wind per day in Asia/Dubai.
+2. Applies cargo handling limits (`--cargo-hs-limit`) to escalate risk.
+3. Emits ASCII tables, CSV exports, and ICS calendar events (UTC timestamps) to `outputs/`.
+
+## 🧪 Quality Gates
+
+Run the full suite before committing:
+
 ```bash
-pip install -r requirements.txt
+pytest -q --cov=src
+black --check .
+isort --check-only .
+flake8 .
+mypy --strict src
 ```
 
-3. Set up environment variables (supports `.env` file in project root):
-```bash
-echo "OPENAI_API_KEY=your-openai-api-key" >> .env
-# or export directly for the current shell
-export OPENAI_API_KEY="your-openai-api-key"
+Coverage must remain ≥ 70%. Typing runs in strict mode; all new code ships with annotations and bilingual one-line docstrings.
+
+## 📂 Project Layout
+
+```
+src/wv/core/       # Domain models, risk logic, cache
+src/wv/providers/  # Stormglass/Open-Meteo/NOAA adapters
+src/wv/services/   # Marine service, scheduler, auto checks
+src/wv/notify/     # Email/Slack/Telegram channels
+src/wv/cli.py      # Typer CLI entrypoint
 ```
 
-4. Start the FastAPI server:
-```bash
-python -m uvicorn openai_gateway:app --host 0.0.0.0 --port 8000 --reload
-```
+## 📄 Additional Docs
 
-5. Open `logistics_control_tower_v2.html` in your browser
+- `.env.example` – authoritative list of environment variables
+- `CHANGELOG.md` – release notes (updated for this feature set)
+- `plan.md` – TDD loops followed in this change
 
-## Usage
-
-### Basic Operations
-- **Vessel Tracking**: View real-time vessel position and route
-- **Schedule Upload**: Import voyage schedules via CSV/JSON
-- **Weather Data**: Upload weather data (CSV) or ADNOC screenshots for risk analysis
-- **AI Assistant**: Ask questions about logistics operations
-- **Daily Briefing**: Generate AI-powered operational summaries
-
-### Advanced Features
-- **IOI Analysis**: Automatic operability assessment
-- **Risk Simulation**: Test different scenarios
-- **Weather Linking**: Automatic schedule adjustments based on weather
-- **File Analysis**: Upload documents for AI analysis
-
-## API Endpoints
-
-- `GET /health` - Health check
-- `POST /api/assistant` - AI assistant chat
-- `POST /api/briefing` - Generate daily briefing
-
-## Performance Optimizations
-
-- **Web Workers**: Marine data fetching in background threads
-- **Idle Callbacks**: Non-blocking UI updates
-- **Passive Event Listeners**: Optimized scroll/touch handling
-- **Lazy Loading**: Efficient resource management
-
-## Accessibility Features
-
-- **Keyboard Navigation**: Full keyboard support
-- **Screen Reader**: ARIA labels and roles
-- **High Contrast**: System preference detection
-- **Touch Targets**: 44px minimum size compliance
-- **Focus Management**: Proper focus handling in modals
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- Open-Meteo for marine weather data
-- Leaflet for mapping functionality
-- OpenAI for AI capabilities
-- Tailwind CSS for styling framework
+For legacy FastAPI UI, refer to earlier tags (`v2.5`) or contact the platform team.

@@ -16,7 +16,6 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field
 from PyPDF2 import PdfReader
 
-
 LOGGER = logging.getLogger(__name__)
 
 
@@ -257,9 +256,7 @@ async def run_assistant(
         TypeError,
         ValueError,
     ) as exc:  # pragma: no cover - validation
-        raise HTTPException(
-            status_code=400, detail=f"Invalid history payload: {exc}"
-        ) from exc
+        raise HTTPException(status_code=400, detail=f"Invalid history payload: {exc}") from exc
 
     attachments = list(files or [])
     payloads: List[bytes] = []
