@@ -6,3 +6,4 @@
 - Run `wv schedule --week --route MW4-AGI` to emit STDOUT table, CSV, and ICS artefacts.
 - Trigger alerts with `wv notify --route MW4-AGI --dry-run --slack --telegram`.
 - Automate at 06:00 / 17:00 Asia/Dubai using cron or Windows Task Scheduler examples from the README.
+- Bootstrap marine connectors with `MarineOpsSettings.from_env()` and call `fetch_forecast_with_fallback` when Stormglass is rate limited.
