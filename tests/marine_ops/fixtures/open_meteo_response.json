@@ -1,0 +1,14 @@
+{
+  "hourly": {
+    "time": [
+      "2025-01-01T00:00",
+      "2025-01-01T01:00"
+    ],
+    "significant_wave_height": [1.1, 1.2],
+    "wave_direction": [175, 180],
+    "wave_period": [11, 12],
+    "wind_speed_10m": [7.5, 8.0],
+    "wind_direction_10m": [185, 190],
+    "visibility": [19, 18]
+  }
+}

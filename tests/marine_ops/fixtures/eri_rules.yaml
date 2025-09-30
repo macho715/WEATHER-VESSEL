@@ -1,0 +1,24 @@
+base_score: 100
+caution_penalty: 20
+danger_penalty: 50
+rules:
+  - variable: Hs
+    caution: 1.5
+    danger: 3.0
+    weight: 0.4
+    direction: max
+  - variable: U10
+    caution: 10
+    danger: 15
+    weight: 0.3
+    direction: max
+  - variable: Vis
+    caution: 5
+    danger: 2
+    weight: 0.2
+    direction: min
+  - variable: Tide
+    caution: -0.5
+    danger: -1.0
+    weight: 0.1
+    direction: min

@@ -6,3 +6,5 @@
 - `wv schedule --week --route MW4-AGI` 명령으로 주간 일정표, CSV, ICS를 생성합니다.
 - `wv notify --route MW4-AGI --dry-run --slack --telegram`으로 채널별 알림을 검증합니다.
 - README의 예시를 활용해 Asia/Dubai 기준 06:00/17:00 자동화를 cron 또는 Windows 작업 스케줄러에 등록합니다.
+- `MarineOpsSettings.from_env()`로 커넥터를 초기화하고 Stormglass가 제한되면 `fetch_forecast_with_fallback`으로 Open-Meteo 폴백을 호출합니다.
+- ADNOC Combined(seas)와 Al Bahar 연안/외해 지시를 `wv.core.fusion.decide_and_eta`로 융합해 Go/Conditional/No-Go 결정을 얻습니다.
